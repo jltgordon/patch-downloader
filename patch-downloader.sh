@@ -8,6 +8,7 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
+# 22/01/2021 James Gordon          Check for xmllint or die
 # 23/07/2020 James Gordon          Allow no CPU in CSV and not alter folder name
 # 22/07/2020 James Gordon          Get recommendations file from OEM catalog zip
 # 17/07/2020 James Gordon          Get ARU etc. from patch_recommendations.xml
@@ -207,10 +208,16 @@ E_OUTPUT_DIR_FAILED=3    # Base output folder creation failed
 E_VARIABLE_NOT_DEFINED=4 # Expected variable not defined
 E_MOS_AUTH_FAILED=5      # Authentication to Oracle MOS failed
 E_EXTRACT_FAILED=6       # File extraction failed
+E_XMLLINT_MISSING=7      # Missing xmllint
 
 xml_days_old=30 # Number of days before forcing download of patch_recommendations.xml
 
 echo -e "\n${scriptName%.*} - Oracle Patch Downloader\n"
+
+command -v xmllint > /dev/null 2>&1 || {
+echo "Requires xmlling to be installed (install libxml2-utils), exiting."
+  exit E_XMLLINT_MISSING
+}
 
 echo -n "Checking for configuration file..."
 
