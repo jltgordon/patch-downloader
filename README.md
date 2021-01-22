@@ -6,6 +6,8 @@ This script uses patch-downloader.csv to download from a list of patches specifi
 
 It doesn't re-download patch files, if the already exist, so you will need to remove a file to force the script to download it again.
 
+It requires xmllint to be installed, install from libxml2-utils.
+
 # patch-downloader.cfg
 
 There are two variables set in this configuration file, one optional.
