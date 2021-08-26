@@ -8,6 +8,8 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
+# 26/08/2021 James Gordon          Check for unzip or die
+#                                  Ignore blank lines in CSV file
 # 22/01/2021 James Gordon          Check for xmllint or die
 # 23/07/2020 James Gordon          Allow no CPU in CSV and not alter folder name
 # 22/07/2020 James Gordon          Get recommendations file from OEM catalog zip
@@ -91,6 +93,7 @@ function downloadCatalog {
       unzip -qq -o -d $scriptPath $oemDir/em_catalog.zip patch_recommendations.xml && {
         mkdir -p ${patchXML%/*}
         mv $scriptPath/patch_recommendations.xml $patchXML
+        chmod u+w $patchXML
       } || {
         echo -e "\nError: Extracting recommendations file failed, exiting.\n"
         return $E_EXTRACT_FAILED
@@ -134,7 +137,14 @@ function getPatchInformationFromSearch {
 
   version=$(xmllint -xpath "/results/patch[1]/urm_components/urm_releases/urm_release[1]/@version" $searchTmp | cut -f2 -d"=" | cut -f2 -d '"')
 
+  # Remove training digit if we have for example 12.2.1.4.0
+  # [[ $(grep -oF . <<< $version | wc -l) -eq 4 ]] && version=${version: 0:-2}
+  [[ ${version: -2:1} == "." ]] && version=${version: 0:-2}
+  [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
+  [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
+
   rm -f $searchTmp
+
   return 0
 }
 
@@ -173,6 +183,12 @@ function getPatchInformation {
 
   version=$(xmllint -xpath "//patch[name[text()=\"$patchid\"]][1]/urm_components/urm_releases/urm_release[1]/@version" $patchXML | cut -f2 -d"=" | cut -f2 -d '"')
 
+  # Remove training digit if we have for example 12.2.1.4.0
+  # [[ $(grep -oF . <<< $version | wc -l) -eq 4 ]] && version=${version: 0:-2}
+  [[ ${version: -2:1} == "." ]] && version=${version: 0:-2}
+  [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
+  [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
+
   return 0
 }
 
@@ -208,7 +224,7 @@ E_OUTPUT_DIR_FAILED=3    # Base output folder creation failed
 E_VARIABLE_NOT_DEFINED=4 # Expected variable not defined
 E_MOS_AUTH_FAILED=5      # Authentication to Oracle MOS failed
 E_EXTRACT_FAILED=6       # File extraction failed
-E_XMLLINT_MISSING=7      # Missing xmllint
+E_SOFTWARE_MISSING=7     # Missing software, xmllint or unzip
 
 xml_days_old=30 # Number of days before forcing download of patch_recommendations.xml
 
@@ -216,7 +232,12 @@ echo -e "\n${scriptName%.*} - Oracle Patch Downloader\n"
 
 command -v xmllint > /dev/null 2>&1 || {
 echo "Requires xmlling to be installed (install libxml2-utils), exiting."
-  exit E_XMLLINT_MISSING
+  exit E_SOFTWARE_MISSING
+}
+
+command -v unzip > /dev/null 2>&1 || {
+echo "Requires unzip to be installed (install unzip), exiting."
+  exit E_SOFTWARE_MISSING
 }
 
 echo -n "Checking for configuration file..."
@@ -264,23 +285,24 @@ downloadCatalog || exit $?
 # Read the file, extracting each line to process
 
 echo -e "\nProcessing patch list file."
+[[ $(grep -c "^\s*$" $patchList) -gt 0 ]] && sed -i '/^[[:space:]]*$/d' $patchList
 
-while IFS=, read -r patchid cpu description group os
+while IFS=, read -r patchid cpu description folder_prefix os
 do
   [[ "$patchid" =~ ^#.*$ ]] && continue
 
   ((totalDownloads++))
 
-  # Strip newline from last field (group or os)
-  group=${group%$'\r'}
+  # Strip newline from last field (folder_prefix or os)
+  folder_prefix=${folder_prefix%$'\r'}
   os=${os%$'\r'}
 
   getPatchInformation || continue
 
   patchFile=$( cut -f1 -d"?" <<< ${patchURL##*/})
-  patchFolder=$outputFolderBase/${group}
+  patchFolder=$outputFolderBase/${folder_prefix}_${version}
 
-  [[ -n $cpu ]] && patchFolder=${patchFolder}_${version}.${cpu}
+  [[ -n $cpu ]] && patchFolder=${patchFolder}.${cpu}
 
   createFolder $patchFolder
 
@@ -289,9 +311,16 @@ do
   if [[ ! -f $patchFolder/$patchFile ]]; then
     echo -e " - \e[32mDownloading\e[0m"
     wget --no-clobber --show-progress --quiet --load-cookies="$cookieFile" --output-document=$patchFolder/$patchFile "$patchURL"
-    if [[ $? -eq 0 ]]; then ((successDownloads++)); else ((failedDownloads++)); fi
+    if [[ $? -eq 0 && $(stat --format=%s $patchFolder/$patchFile) -gt 0 ]]
+	then
+	  ((successDownloads++))
+	else
+	  echo -e "\n\e[31mDownload failed, removing patch file.\e[0m"
+	  rm -f $patchFolder/$patchFile
+	  ((failedDownloads++))
+	fi
   else
-    echo -e " - \e[1;33mPatch file already exists, skipping download.\e[0m"
+    echo -e " - \e[1;33mPatch already exists, skipping.\e[0m"
     ((skippedDownloads++))
   fi
 
