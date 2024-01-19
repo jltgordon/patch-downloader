@@ -8,6 +8,7 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
+# 19/01/2023 James Gordon          Fix em_catalog failing download and exit return codes variable errors
 # 26/08/2021 James Gordon          Check for unzip or die
 #                                  Ignore blank lines in CSV file
 # 22/01/2021 James Gordon          Check for xmllint or die
@@ -85,8 +86,8 @@ function downloadCatalog {
 
     echo -e "Downloading OEM catalog files to $oemDir.\n"
 
-    wget  --show-progress --quiet --user-agent="Mozilla/5.0"  --load-cookies=$cookieFile --save-cookies=$cookieFile --keep-session-cookies "$urlWeb/Orion/Download/download_patch/p9348486_112000_Generic.zip" --output-document=$oemDir/p9348486_112000_Generic.zip
-    wget  --show-progress --quiet --user-agent="Mozilla/5.0"  --load-cookies=$cookieFile --save-cookies=$cookieFile --keep-session-cookies "$urlWeb/download/em_catalog.zip" --output-document=$oemDir/em_catalog.zip
+    wget --show-progress --quiet --load-cookies=$cookieFile "$urlWeb/Orion/Download/download_patch/p9348486_112000_Generic.zip" --output-document=$oemDir/p9348486_112000_Generic.zip
+    wget --show-progress --quiet --load-cookies=$cookieFile "$urlWeb/download/em_catalog.zip" --output-document=$oemDir/em_catalog.zip
 
     [[ $? -eq 0 ]] && {
       echo -e "\nExtracting Patch Recommendations file from OEM catlog zip."
@@ -232,12 +233,12 @@ echo -e "\n${scriptName%.*} - Oracle Patch Downloader\n"
 
 command -v xmllint > /dev/null 2>&1 || {
 echo "Requires xmlling to be installed (install libxml2-utils), exiting."
-  exit E_SOFTWARE_MISSING
+  exit $E_SOFTWARE_MISSING
 }
 
 command -v unzip > /dev/null 2>&1 || {
 echo "Requires unzip to be installed (install unzip), exiting."
-  exit E_SOFTWARE_MISSING
+  exit $E_SOFTWARE_MISSING
 }
 
 echo -n "Checking for configuration file..."
