@@ -8,6 +8,7 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
+# 03/10/2025 James Gordon          Add --no-check-certificate to wget to ignore certificate issues with MOS
 # 19/01/2023 James Gordon          Fix em_catalog failing download and exit return codes variable errors
 # 26/08/2021 James Gordon          Check for unzip or die
 #                                  Ignore blank lines in CSV file
@@ -64,7 +65,7 @@ function createOutputFolder {
 function authenticateToMOS {
   # Authenticate to MOS (My Oracle Support)
   # Return: 0 if authenticated successfully, otherwise 1
-  wget --quiet --secure-protocol=auto --save-cookies="$cookieFile" --keep-session-cookies --http-user=$oraEmail --ask-password --output-document=/dev/null "$urlBase/download"
+  wget --no-check-certificate --quiet --secure-protocol=auto --save-cookies="$cookieFile" --keep-session-cookies --http-user=$oraEmail --ask-password --output-document=/dev/null "$urlBase/download"
 
   [ $? -ne 0 ] && {
     echo -e "\n\e[31mError: Authentication to Oracle support failed.\e[0m\n"
@@ -86,8 +87,8 @@ function downloadCatalog {
 
     echo -e "Downloading OEM catalog files to $oemDir.\n"
 
-    wget --show-progress --quiet --load-cookies=$cookieFile "$urlWeb/Orion/Download/download_patch/p9348486_112000_Generic.zip" --output-document=$oemDir/p9348486_112000_Generic.zip
-    wget --show-progress --quiet --load-cookies=$cookieFile "$urlWeb/download/em_catalog.zip" --output-document=$oemDir/em_catalog.zip
+    wget --no-check-certificate --show-progress --quiet --load-cookies=$cookieFile "$urlWeb/Orion/Download/download_patch/p9348486_112000_Generic.zip" --output-document=$oemDir/p9348486_112000_Generic.zip
+    wget --no-check-certificate --show-progress --quiet --load-cookies=$cookieFile "$urlWeb/download/em_catalog.zip" --output-document=$oemDir/em_catalog.zip
 
     [[ $? -eq 0 ]] && {
       echo -e "\nExtracting Patch Recommendations file from OEM catlog zip."
@@ -114,7 +115,7 @@ function getPatchInformationFromSearch {
   # Get the patch information XML from MOS
   # Return: 0 if we can get all the data, otherwise 1
   local searchTmp=$(mktemp --tmpdir mos_search.XXXXXX)
-  wget --quiet --load-cookies="$cookieFile" --output-document=$searchTmp "$urlBase/search?bug=$patchid"
+  wget --no-check-certificate --quiet --load-cookies="$cookieFile" --output-document=$searchTmp "$urlBase/search?bug=$patchid"
   local patchURLArray=($(xmllint -xpath "//patch/files/file/download_url/text()" $searchTmp 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]"))
 
   [[ ${#patchURLArray[@]} -eq 0 ]] && {
@@ -311,7 +312,7 @@ do
 
   if [[ ! -f $patchFolder/$patchFile ]]; then
     echo -e " - \e[32mDownloading\e[0m"
-    wget --no-clobber --show-progress --quiet --load-cookies="$cookieFile" --output-document=$patchFolder/$patchFile "$patchURL"
+    wget --no-check-certificate --no-clobber --show-progress --quiet --load-cookies="$cookieFile" --output-document=$patchFolder/$patchFile "$patchURL"
     if [[ $? -eq 0 && $(stat --format=%s $patchFolder/$patchFile) -gt 0 ]]
 	then
 	  ((successDownloads++))
