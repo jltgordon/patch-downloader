@@ -303,6 +303,7 @@ do
 
   patchFile=$( cut -f1 -d"?" <<< ${patchURL##*/})
   patchFolder=$outputFolderBase/${folder_prefix}_${version}
+  patchFolder=${patchFolder// /_}
 
   [[ -n $cpu ]] && patchFolder=${patchFolder}.${cpu}
 
