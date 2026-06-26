@@ -8,6 +8,10 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
+# 25/06/2026 James Gordon          Fix patchURLArray no longer working
+#                                  Add debug option and debug output
+#                                  Tidy patch URL logic
+#                                  Tidy colouring and text of messages
 # 03/10/2025 James Gordon          Add --no-check-certificate to wget to ignore certificate issues with MOS
 # 19/01/2023 James Gordon          Fix em_catalog failing download and exit return codes variable errors
 # 26/08/2021 James Gordon          Check for unzip or die
@@ -28,7 +32,7 @@ function createFolder {
   # Return: 0 if exists or created successfully, otherwise 1
   [ -d $1 ] || {
     mkdir -p $1 || {
-      echo -e "\n\e[31mError: Unable to create patch folder $1.\e[0m\n"
+      echo -e "\n${RED}Error: Unable to create patch folder $1.${RESET}\n"
       return 1
     }
   }
@@ -39,7 +43,7 @@ function checkFileExists {
   # Check that a file exists
   # Return: 0 if file exists, otherwise 1
   [ -r $1 ] || {
-    echo -e "\e[31mFailed.\n\nError: Configuration file $1 not found.\e[0m\n"
+    echo -e "${RED}Failed.\n\nError: Configuration file $1 not found.${RESET}\n"
     return 1
   }
   return 0
@@ -49,13 +53,13 @@ function createOutputFolder {
   # Check and create output base folder, if it doesn't exist
   # Return: 0 if exists or created successfully, otherwise 1
   [ -f $outputFolderBase ] && {
-    echo -e "\e[31mFailed.\n\nError: Output folder is a file.\e[0m\n"
+    echo -e "${RED}Failed.\n\nError: Output folder is a file.${RESET}\n"
     return 1
   }
 
   [ -d $outputFolderBase ] || {
     mkdir -p $outputFolderBase 2> /dev/null || {
-      echo -e "\e[31mFailed.\n\nError: Cannot create output folder.\e[0m\n"
+      echo -e "${RED}Failed.\n\nError: Cannot create output folder.${RESET}\n"
       return 1
     }
   }
@@ -68,7 +72,7 @@ function authenticateToMOS {
   wget --no-check-certificate --quiet --secure-protocol=auto --save-cookies="$cookieFile" --keep-session-cookies --http-user=$oraEmail --ask-password --output-document=/dev/null "$urlBase/download"
 
   [ $? -ne 0 ] && {
-    echo -e "\n\e[31mError: Authentication to Oracle support failed.\e[0m\n"
+    echo -e "\n${RED}Error: Authentication to Oracle support failed.${RESET}\n"
     return 1
   }
   return 0
@@ -116,28 +120,27 @@ function getPatchInformationFromSearch {
   # Return: 0 if we can get all the data, otherwise 1
   local searchTmp=$(mktemp --tmpdir mos_search.XXXXXX)
   wget --no-check-certificate --quiet --load-cookies="$cookieFile" --output-document=$searchTmp "$urlBase/search?bug=$patchid"
-  local patchURLArray=($(xmllint -xpath "//patch/files/file/download_url/text()" $searchTmp 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]"))
+  mapfile -t patchURLArray < <(xmllint -xpath "//patch/files/file/download_url/text()" $searchTmp | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' | grep -oP '(?<=<!\[CDATA\[).*?(?=\]\]>)')
 
-  [[ ${#patchURLArray[@]} -eq 0 ]] && {
-    echo -e "\n\e[31mError: Cannot find patch information to download patch $patchid, skipping.\e[0m"
-    ((missingDownloads++))
-    return 1
+  [[ -n $debugOutput ]] && {
+    echo -e "\nDebug: getPatchInformationFromSearch: patchURLArray has ${#patchURLArray[@]} elements."
+    for item in "${patchURLArray[@]}"; do
+      echo " Item: $item"
+    done
   }
 
-  [[ ${#patchURLArray[@]} -gt 1 ]] && {
-    for i in "${!patchURLArray[@]}"; do
-      [[ "${patchURLArray[$i]}" =~ "$os" ]] && {
-        patchURL=$urlWeb${patchURLArray[$i]}
-        break
-      }
-    done
-  } || {
-    patchURL=$urlWeb${patchURLArray[0]}
+
+  [[ ${#patchURLArray[@]} -eq 0 ]] && {
+    echo -e "\n${RED}Error: Cannot find patch information to download patch $patchid, skipping.${RESET}"
+    ((missingDownloads++))
+    return 1
   }
 
   bundleName=$(xmllint -xpath "/results/patch[1]/bug/abstract/text()" $searchTmp 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]")
 
   version=$(xmllint -xpath "/results/patch[1]/urm_components/urm_releases/urm_release[1]/@version" $searchTmp | cut -f2 -d"=" | cut -f2 -d '"')
+
+  rm -f $searchTmp
 
   # Remove training digit if we have for example 12.2.1.4.0
   # [[ $(grep -oF . <<< $version | wc -l) -eq 4 ]] && version=${version: 0:-2}
@@ -145,36 +148,55 @@ function getPatchInformationFromSearch {
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
 
-  rm -f $searchTmp
-
-  return 0
-}
-
-function getPatchInformation {
-  # Get the patch information from recommendations XML file
-  # Return: 0 if we have the information, otherwise 1
-
-  # Get patch URL from recommendations XML file
-  # Fails if the patch is not a recommended patch
-  local patchURLArray=($(xmllint -xpath "//patch[name[text()=\"$patchid\"]]/files/file/download_url/text()" $patchXML 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]"))
-
-  # If the patch is missing, attempt to get it from a search
-  [[ ${#patchURLArray[@]} -eq 0 ]] && {
-    echo -e "\n\e[33mPatch $patchid ($description) ${os:-"Generic"} not listed in the recommendations file, using bug search.\e[0m"
-    # Get all the required information from a search instead
-    getPatchInformationFromSearch
-    return $?
+  [[ ${#patchURLArray[@]} -eq 1 ]] && {
+    patchURL=$urlWeb${patchURLArray[0]}
+    return
   }
 
   [[ ${#patchURLArray[@]} -gt 1 ]] && {
     for i in "${!patchURLArray[@]}"; do
       [[ "${patchURLArray[$i]}" =~ "$os" ]] && {
         patchURL=$urlWeb${patchURLArray[$i]}
-        break
+        return 0
       }
     done
-  } || {
-    patchURL=$urlWeb${patchURLArray[0]}
+  }
+
+  echo -e "\n${RED}Error: Cannot find OS patch information for $patchid ($os), skipping.${RESET}"
+  ((missingDownloads++))
+
+  return 1
+}
+
+function getPatchInformation {
+  # Get the patch information from recommendations XML file
+  # Return: 0 if we have the information, otherwise 1
+
+  patchURL=""
+
+  # Get patch URL from recommendations XML file
+  # Fails if the patch is not a recommended patch
+  mapfile -t patchURLArray < <(xmllint -xpath "//patch[name[text()=\"$patchid\"]]/files/file/download_url/text()" $patchXML | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' | grep -oP '(?<=<!\[CDATA\[).*?(?=\]\]>)')
+
+  [[ -n $debugOutput ]] && {
+    echo -e "\nDebug: getPatchInformation: patchURLArray has ${#patchURLArray[@]} elements."
+    for item in "${patchURLArray[@]}"; do
+      echo " Item: $item"
+    done
+  }
+
+  # If the patch is missing, attempt to get it from a search
+  [[ ${#patchURLArray[@]} -eq 0 ]] && {
+    echo -e "\n${YELLOW}Patch $patchid ($description) ${os:-"Generic"} not listed in the recommendations file, using bug search.${RESET}"
+    # Get all the required information from a search instead
+    getPatchInformationFromSearch
+    return $?
+  }
+
+  [[ ${#patchURLArray[@]} -eq 0 ]] && {
+    [[ -n $debugOutput ]] && echo "Debug: getPatchInformation: Unable to get patch information, returning null.\n"
+    patchURL=""
+    return
   }
 
   bundleName=$(xmllint -xpath "//patch[name[text()=\"$patchid\"]][1]/psu_bundle/text()" $patchXML 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]")
@@ -191,7 +213,24 @@ function getPatchInformation {
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
 
-  return 0
+  [[ ${#patchURLArray[@]} -eq 1 ]] && {
+    patchURL=$urlWeb${patchURLArray[0]}
+    return
+  }
+
+  [[ ${#patchURLArray[@]} -gt 1 ]] && {
+    for i in "${!patchURLArray[@]}"; do
+      [[ "${patchURLArray[$i]}" =~ "$os" ]] && {
+        patchURL=$urlWeb${patchURLArray[$i]}
+        return 0
+      }
+    done
+  }
+
+  echo -e "\n${RED}Error: Cannot find OS patch information for $patchid, skipping.${RESET}"
+  ((missingDownloads++))
+
+  return 1
 }
 
 #
@@ -228,6 +267,14 @@ E_MOS_AUTH_FAILED=5      # Authentication to Oracle MOS failed
 E_EXTRACT_FAILED=6       # File extraction failed
 E_SOFTWARE_MISSING=7     # Missing software, xmllint or unzip
 
+# Colours
+RED="\e[31m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+UUNDERLINE="\e[4m"
+BOLD="\033[1m"
+RESET="\e[0m"
+
 xml_days_old=30 # Number of days before forcing download of patch_recommendations.xml
 
 echo -e "\n${scriptName%.*} - Oracle Patch Downloader\n"
@@ -246,18 +293,19 @@ echo -n "Checking for configuration file..."
 
 checkFileExists $configFile || exit $E_FILE_NOT_EXISTS
 
-echo -ne "Success.\nChecking for patch list..."
+echo -ne "${GREEN}success.${RESET}\nChecking for patch list..."
 
 checkFileExists $patchList || exit $E_FILE_NOT_EXISTS
 
-echo -e "Success."
+echo -e "${GREEN}success.${RESET}"
 
 # Read variables from configurarion file
 outputFolderBase=$(grep ^outputFolderBase $configFile | cut -f2 -d"=")
 oraEmail=$(grep ^oraEmail $configFile | cut -f2 -d"=")
+debugOutput=$(grep ^debugOutput $configFile | cut -f2 -d"=")
 
 [[ -z $outputFolderBase ]] && {
-  echo -e "\n\e[31mError: outputFolderBase variable not defined in ${scriptName%.*}.cfg, exiting.\e[0m\n"
+  echo -e "\n${RED}Error: outputFolderBase variable not defined in ${scriptName%.*}.cfg, exiting.${RESET}\n"
   exit $E_VARIABLE_NOT_DEFINED
 }
 
@@ -265,7 +313,9 @@ echo -ne "Checking output folder..."
 
 createOutputFolder $outputFolderBase || exit 3
 
-echo -e "Success.\n"
+echo -e "${GREEN}success.${RESET}\n"
+
+[[ -n $debugOutput ]] && echo -e "${GREEN}Debug output enabled.${RESET}\n"
 
 # Prompt for email address to login to support if not defailed in the configuration file
 [ -z $oraEmail ] && read -p "Enter Oracle Support email address: " oraEmail || echo -e "Email address read from configuration file."
@@ -280,9 +330,6 @@ echo -e "\nAuthenticated to Oracle support."
 
 # Download OEM catalog files and extract patch recomendations XML file, if older than xml_days_old days
 downloadCatalog || exit $?
-
-# Set the variables before first use to define as global
-#patchURL= # The URL to download the patch
 
 # Read the file, extracting each line to process
 
@@ -299,7 +346,22 @@ do
   folder_prefix=${folder_prefix%$'\r'}
   os=${os%$'\r'}
 
+  [[ -n $debugOutput ]] && {
+    echo -e "\nDebug: Patch Information.
+
+  Patch ID     : $patchid
+  CPU          : $cpu
+  Description  : $description
+  Folder Prefix: $folder_prefix
+  OS           : $os"
+  }
+
   getPatchInformation || continue
+
+  [[ -z $patchURL ]] && {
+    echo -e " - ${RED}unable to get information of patch, ignoring.${RESET}"
+    ((failedDownloads++))
+  }
 
   patchFile=$( cut -f1 -d"?" <<< ${patchURL##*/})
   patchFolder=$outputFolderBase/${folder_prefix}_${version}
@@ -312,21 +374,21 @@ do
   echo -ne "\nPatch $patchFile - ${bundleName:-"Missing Description"}"
 
   if [[ ! -f $patchFolder/$patchFile ]]; then
-    echo -e " - \e[32mDownloading\e[0m"
+    echo -e " - ${GREEN}Downloading${RESET}"
     wget --no-check-certificate --no-clobber --show-progress --quiet --load-cookies="$cookieFile" --output-document=$patchFolder/$patchFile "$patchURL"
     if [[ $? -eq 0 && $(stat --format=%s $patchFolder/$patchFile) -gt 0 ]]
-	then
-	  ((successDownloads++))
-	else
-	  echo -e "\n\e[31mDownload failed, removing patch file.\e[0m"
-	  rm -f $patchFolder/$patchFile
-	  ((failedDownloads++))
-	fi
+    then
+      ((successDownloads++))
+    else
+      echo -e "\n${RED}Download failed, removing patch file.${RESET}"
+      rm -f $patchFolder/$patchFile
+      ((failedDownloads++))
+    fi
   else
-    echo -e " - \e[1;33mPatch already exists, skipping.\e[0m"
+    echo -e " - ${YELLOW}Patch already exists, skipping.${RESET}"
     ((skippedDownloads++))
   fi
 
 done < $patchList
 
-echo -e "\nDownloads: $totalDownloads, successful: \e[32m$successDownloads\e[0m, failed: \e[31m$failedDownloads\e[0m, skipped: \e[1;33m$skippedDownloads\e[0m, missing: \e[31m$missingDownloads\e[0m.\nDownloads complete and stored in $outputFolderBase.\n"
+echo -e "\nDownloads: $totalDownloads, successful: ${GREEN}$successDownloads${RESET}, failed: ${RED}$failedDownloads${RESET}, skipped: ${YELLOW}$skippedDownloads${RESET}, missing: ${RED}$missingDownloads${RESET}.\nDownloads complete and stored in $outputFolderBase.\n"
