@@ -8,6 +8,7 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
+# 26/10/2026 James Gordon          Check for and remove CSV header if present
 # 25/06/2026 James Gordon          Fix patchURLArray no longer working
 #                                  Add debug option and debug output
 #                                  Tidy patch URL logic
@@ -334,7 +335,7 @@ downloadCatalog || exit $?
 # Read the file, extracting each line to process
 
 echo -e "\nProcessing patch list file."
-[[ $(grep -c "^\s*$" $patchList) -gt 0 ]] && sed -i '/^[[:space:]]*$/d' $patchList
+sed -i -e '/^[[:space:]]*$/d' -e '/^Patch ID/d' $patchList
 
 while IFS=, read -r patchid cpu description folder_prefix os
 do
