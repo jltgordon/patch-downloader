@@ -203,7 +203,7 @@ function getPatchInformation {
   bundleName=$(xmllint -xpath "//patch[name[text()=\"$patchid\"]][1]/psu_bundle/text()" $patchXML 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]")
   # If we can't find the bundleName in the patch recommendations file search the bugs file
   [[ $? -ne 0 ]] && {
-    bundleName=$(grep -A1 $patchid $patchBugs  | grep abstract | tr -s ' '| sort -u | cut -f3 -d"[" | cut -f1 -d "]")
+    bundleName=$(grep -A1 $patchid $patchBugs  | grep abstract | tr -s ' '| sort -u | cut -f3 -d"[" | cut -f1 -d "]" | tail -1)
   }
 
   version=$(xmllint -xpath "//patch[name[text()=\"$patchid\"]][1]/urm_components/urm_releases/urm_release[1]/@version" $patchXML | cut -f2 -d"=" | cut -f2 -d '"')
