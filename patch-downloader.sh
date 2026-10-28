@@ -8,7 +8,8 @@
 
 # Date       Author                Reason
 # ~~~~       ~~~~~~                ~~~~~~
-# 26/10/2026 James Gordon          Check for and remove CSV header if present
+# 28/10/2026 James Gordon          Hide XPath set is empty messages
+#                                  Fix not getting the version from MOS, use the description from the CSV
 # 25/06/2026 James Gordon          Fix patchURLArray no longer working
 #                                  Add debug option and debug output
 #                                  Tidy patch URL logic
@@ -121,7 +122,7 @@ function getPatchInformationFromSearch {
   # Return: 0 if we can get all the data, otherwise 1
   local searchTmp=$(mktemp --tmpdir mos_search.XXXXXX)
   wget --no-check-certificate --quiet --load-cookies="$cookieFile" --output-document=$searchTmp "$urlBase/search?bug=$patchid"
-  mapfile -t patchURLArray < <(xmllint -xpath "//patch/files/file/download_url/text()" $searchTmp | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' | grep -oP '(?<=<!\[CDATA\[).*?(?=\]\]>)')
+  mapfile -t patchURLArray < <(xmllint -xpath "//patch/files/file/download_url/text()" $searchTmp 2> /dev/null | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' | grep -oP '(?<=<!\[CDATA\[).*?(?=\]\]>)')
 
   [[ -n $debugOutput ]] && {
     echo -e "\nDebug: getPatchInformationFromSearch: patchURLArray has ${#patchURLArray[@]} elements."
@@ -139,13 +140,16 @@ function getPatchInformationFromSearch {
 
   bundleName=$(xmllint -xpath "/results/patch[1]/bug/abstract/text()" $searchTmp 2> /dev/null | cut -f3 -d"[" | cut -f1 -d "]")
 
-  version=$(xmllint -xpath "/results/patch[1]/urm_components/urm_releases/urm_release[1]/@version" $searchTmp | cut -f2 -d"=" | cut -f2 -d '"')
+  version=$(xmllint -xpath "/results/patch[1]/urm_components/urm_releases/urm_release[1]/@version" $searchTmp 2> /dev/null | cut -f2 -d"=" | cut -f2 -d '"')
+
+  [[ -z $version ]] && {
+    version=${description##* }
+    version=${version/.$cpu}
+  }
 
   rm -f $searchTmp
 
   # Remove training digit if we have for example 12.2.1.4.0
-  # [[ $(grep -oF . <<< $version | wc -l) -eq 4 ]] && version=${version: 0:-2}
-  [[ ${version: -2:1} == "." ]] && version=${version: 0:-2}
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
 
@@ -177,7 +181,7 @@ function getPatchInformation {
 
   # Get patch URL from recommendations XML file
   # Fails if the patch is not a recommended patch
-  mapfile -t patchURLArray < <(xmllint -xpath "//patch[name[text()=\"$patchid\"]]/files/file/download_url/text()" $patchXML | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' | grep -oP '(?<=<!\[CDATA\[).*?(?=\]\]>)')
+  mapfile -t patchURLArray < <(xmllint -xpath "//patch[name[text()=\"$patchid\"]]/files/file/download_url/text()" $patchXML 2> /dev/null | sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&amp;/\&/g' | grep -oP '(?<=<!\[CDATA\[).*?(?=\]\]>)')
 
   [[ -n $debugOutput ]] && {
     echo -e "\nDebug: getPatchInformation: patchURLArray has ${#patchURLArray[@]} elements."
@@ -206,11 +210,14 @@ function getPatchInformation {
     bundleName=$(grep -A1 $patchid $patchBugs  | grep abstract | tr -s ' '| sort -u | cut -f3 -d"[" | cut -f1 -d "]" | tail -1)
   }
 
-  version=$(xmllint -xpath "//patch[name[text()=\"$patchid\"]][1]/urm_components/urm_releases/urm_release[1]/@version" $patchXML | cut -f2 -d"=" | cut -f2 -d '"')
+  version=$(xmllint -xpath "//patch[name[text()=\"$patchid\"]][1]/urm_components/urm_releases/urm_release[1]/@version" $patchXML 2> /dev/null | cut -f2 -d"=" | cut -f2 -d '"')
+
+  [[ -z $version ]] && {
+    version=${description##* }
+    version=${version/.$cpu}
+  }
 
   # Remove training digit if we have for example 12.2.1.4.0
-  # [[ $(grep -oF . <<< $version | wc -l) -eq 4 ]] && version=${version: 0:-2}
-  [[ ${version: -2:1} == "." ]] && version=${version: 0:-2}
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
   [[ ${version: -2} == ".0" ]] && version=${version: 0:-2}
 
@@ -335,7 +342,7 @@ downloadCatalog || exit $?
 # Read the file, extracting each line to process
 
 echo -e "\nProcessing patch list file."
-sed -i -e '/^[[:space:]]*$/d' -e '/^Patch ID/d' $patchList
+[[ $(grep -c "^\s*$" $patchList) -gt 0 ]] && sed -i '/^[[:space:]]*$/d' $patchList
 
 while IFS=, read -r patchid cpu description folder_prefix os
 do
@@ -372,6 +379,10 @@ do
 
   createFolder $patchFolder
 
+  [[ -n $debugOutput ]] && {
+    echo -e "\nDebug: Folder : $patchFolder"
+  }
+
   echo -ne "\nPatch $patchFile - ${bundleName:-"Missing Description"}"
 
   if [[ ! -f $patchFolder/$patchFile ]]; then
@@ -392,4 +403,4 @@ do
 
 done < $patchList
 
-echo -e "\nDownloads: $totalDownloads, successful: ${GREEN}$successDownloads${RESET}, failed: ${RED}$failedDownloads${RESET}, skipped: ${YELLOW}$skippedDownloads${RESET}, missing: ${RED}$missingDownloads${RESET}.\nDownloads complete and stored in $outputFolderBase.\n"
+echo -e "\nDownloads: $totalDownloads, successful: ${GREEN}$successDownloads${RESET}, failed: ${RED}$failedDownloads${RESET}, skipped: ${YELLOW}$skippedDownloads${RESET}, missing: ${RED}$missingDownloads${RESET}.\n\nDownloads complete and stored in $outputFolderBase.\n"
